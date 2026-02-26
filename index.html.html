@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>斗地主·多索雷斯版</title>
+    <style>
+        :root { --msr-gold: #c7a976; --card-w: 55px; --card-h: 80px; }
+        body { 
+            margin: 0; background: #121212; color: white; 
+            font-family: -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center;
+            height: 100vh; overflow: hidden; touch-action: manipulation;
+        }
+        .info-panel { margin-top: 15px; font-size: 0.9rem; color: var(--msr-gold); height: 20px; font-weight: bold; }
+        
+        /* 牌桌容器 */
+        #game-board {
+            position: relative; width: 95vw; height: 60vh; margin-top: 10px;
+            background: radial-gradient(circle, #245a3b 0%, #0f2619 100%);
+            border: 3px solid #0d2e1a; border-radius: 15px; box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
+        }
+
+        /* 手牌布局 */
+        .hand { position: absolute; display: flex; justify-content: center; width: 100%; }
+        #player-hand { bottom: 15px; z-index: 100; }
+        #ai-left { left: -130px; top: 40%; transform: rotate(90deg); width: 300px; }
+        #ai-right { right: -130px; top: 40%; transform: rotate(-90deg); width: 300px; }
+        
+        /* 出牌区 */
+        #desk { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); display: flex; gap: 4px; min-height: 85px; }
+
+        /* 卡片设计 */
+        .card {
+            width: var(--card-w); height: var(--card-h);
+            background: #fff; border-radius: 4px; border: 1px solid #aaa;
+            color: #000; font-weight: bold; padding: 4px; cursor: pointer;
+            margin-left: -35px; transition: transform 0.2s; position: relative;
+            display: flex; flex-direction: column; justify-content: space-between; font-size: 0.8rem;
+            box-shadow: 1px 2px 5px rgba(0,0,0,0.3);
+        }
+        .card:first-child { margin-left: 0; }
+        .card.selected { transform: translateY(-18px); border: 2px solid var(--msr-gold); box-shadow: 0 0 10px var(--msr-gold); }
+        .card.ai-card { background: linear-gradient(135deg, #2c3e50, #1a1a1a); border-color: #333; }
+        .red { color: #e63946; }
+
+        /* 控制按钮 */
+        .controls { margin-top: 20px; display: flex; gap: 8px; }
+        button { 
+            padding: 12px 20px; border-radius: 20px; border: none; font-weight: bold; 
+            font-size: 0.9rem; box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+        }
+        .btn-start { background: var(--msr-gold); color: #000; }
+        .btn-play { background: #e63946; color: #fff; }
+        .btn-pass { background: #444; color: #fff; }
+
+        /* 音乐开关 */
+        #music-toggle { 
+            position: fixed; top: 15px; right: 15px; width: 40px; height: 40px; 
+            border-radius: 50%; background: rgba(0,0,0,0.5); color: var(--msr-gold); 
+            border: 1px solid var(--msr-gold); font-size: 1.2rem; z-index: 1000;
+        }
+    </style>
+</head>
+<body onclick="unlockAudio()">
+
+    <div class="info-panel" id="status">多索雷斯假日 - 斗地主模拟器</div>
+    <button id="music-toggle" onclick="toggleMusic()">🎵</button>
+
+    <div id="game-board">
+        <div id="ai-left" class="hand"></div>
+        <div id="ai-right" class="hand"></div>
+        <div id="desk"></div>
+        <div id="player-hand" class="hand"></div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-start" onclick="startGame()">🎬 重开</button>
+        <button class="btn-play" onclick="playSelected()">🔥 出牌</button>
+        <button class="btn-pass" onclick="handlePass()">⏭ 不要</button>
+    </div>
+
+    <audio id="bgm" loop preload="auto">
+        <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const ranks = ['3','4','5','6','7','8','9','10','J','Q','K','A','2'];
+        const suits = ['♠','♥','♣','♦'];
+        let hands = { player: [], aiLeft: [], aiRight: [] };
+        let selectedCards = [];
+        let lastPlayed = { user: '', cards: [] };
+        let audioUnlocked = false;
+
+        // 手机端音频解锁：用户只要点击页面任何位置就触发
+        function unlockAudio() {
+            if (audioUnlocked) return;
+            const bgm = document.getElementById('bgm');
+            bgm.play().then(() => {
+                bgm.pause(); // 播放成功立即暂停，标记已解锁
+                audioUnlocked = true;
+                console.log("Audio Unlocked");
+            }).catch(e => console.log("Waiting for user interaction..."));
+        }
+
+        function toggleMusic() {
+            const bgm = document.getElementById('bgm');
+            const btn = document.getElementById('music-toggle');
+            if (bgm.paused) {
+                bgm.play().then(() => {
+                    btn.innerText = "⏸";
+                    btn.style.boxShadow = "0 0 10px #c7a976";
+                }).catch(() => alert("请先在绿色桌面上点一下，再开启音乐！"));
+            } else {
+                bgm.pause();
+                btn.innerText = "🎵";
+                btn.style.boxShadow = "none";
+            }
+        }
+
+        function createDeck() {
+            let deck = [];
+            ranks.forEach((r, i) => suits.forEach(s => deck.push({r, s, v: i, color: (s==='♥'||s==='♦')?'red':''})));
+            deck.push({r: '小', s: '🃏', v: 13}, {r: '大', s: '🃏', v: 14, color: 'red'});
+            return deck.sort(() => Math.random() - 0.5);
+        }
+
+        function startGame() {
+            const deck = createDeck();
+            hands.player = deck.slice(0, 17).sort((a,b) => a.v - b.v);
+            hands.aiLeft = deck.slice(17, 34).sort((a,b) => a.v - b.v);
+            hands.aiRight = deck.slice(34, 51).sort((a,b) => a.v - b.v);
+            lastPlayed = { user: '', cards: [] };
+            document.getElementById('desk').innerHTML = '';
+            renderAll();
+            document.getElementById('status').innerText = "游戏开始！你的回合";
+        }
+
+        function renderHand(id, cards, isAI) {
+            const container = document.getElementById(id);
+            container.innerHTML = '';
+            cards.forEach((card, index) => {
+                const div = document.createElement('div');
+                div.className = `card ${isAI ? 'ai-card' : ''} ${card.color}`;
+                if(!isAI) {
+                    div.innerHTML = `<span>${card.r}</span><span style="font-size:1.5rem;align-self:center">${card.s}</span><span>${card.r}</span>`;
+                    div.onclick = (e) => {
+                        e.stopPropagation(); // 防止触发body的解锁函数
+                        div.classList.toggle('selected');
+                        const pos = selectedCards.indexOf(index);
+                        if(pos > -1) selectedCards.splice(pos, 1);
+                        else selectedCards.push(index);
+                    };
+                }
+                container.appendChild(div);
+            });
+        }
+
+        function renderAll() {
+            renderHand('player-hand', hands.player, false);
+            renderHand('ai-left', hands.aiLeft, true);
+            renderHand('ai-right', hands.aiRight, true);
+        }
+
+        function playSelected() {
+            if(selectedCards.length === 0) return;
+            let played = selectedCards.map(idx => hands.player[idx]);
+            // 简单规则：必须出一张且比上家大
+            if(lastPlayed.cards.length > 0 && lastPlayed.user !== 'player') {
+                if(played[0].v <= lastPlayed.cards[0].v) return alert("牌不够大！");
+            }
+            selectedCards.sort((a,b) => b-a).forEach(idx => hands.player.splice(idx, 1));
+            executeMove('player', played);
+        }
+
+        function executeMove(user, cards) {
+            lastPlayed = { user, cards };
+            showOnDesk(cards);
+            selectedCards = [];
+            renderAll();
+            if(checkWin(user)) return;
+
+            let nextUser = (user === 'player') ? 'aiRight' : (user === 'aiRight' ? 'aiLeft' : 'player');
+            if(nextUser !== 'player') setTimeout(() => aiAction(nextUser), 1000);
+            else document.getElementById('status').innerText = "你的回合";
+        }
+
+        function aiAction(aiName) {
+            const hand = hands[aiName];
+            document.getElementById('status').innerText = (aiName === 'aiRight' ? "右侧" : "左侧") + "出牌中...";
+            
+            // AI 压牌逻辑：找第一张比桌面大的牌
+            let idx = hand.findIndex(c => lastPlayed.cards.length === 0 || lastPlayed.user === aiName || c.v > lastPlayed.cards[0].v);
+            
+            if(idx > -1) {
+                const card = hand.splice(idx, 1);
+                executeMove(aiName, card);
+            } else {
+                document.getElementById('status').innerText = (aiName === 'aiRight' ? "右侧" : "左侧") + "不要";
+                setTimeout(() => {
+                    let next = (aiName === 'aiRight') ? 'aiLeft' : 'player';
+                    if(next !== 'player') aiAction(next);
+                    else document.getElementById('status').innerText = "你的回合";
+                }, 800);
+            }
+        }
+
+        function showOnDesk(cards) {
+            const desk = document.getElementById('desk');
+            desk.innerHTML = '';
+            cards.forEach(card => {
+                const div = document.createElement('div');
+                div.className = `card ${card.color}`;
+                div.innerHTML = `<span>${card.r}</span><span style="font-size:1.5rem;align-self:center">${card.s}</span>`;
+                div.style.marginLeft = '5px';
+                desk.appendChild(div);
+            });
+        }
+
+        function handlePass() {
+            if(lastPlayed.cards.length === 0) return;
+            document.getElementById('status').innerText = "你不要";
+            setTimeout(() => aiAction('aiRight'), 800);
+        }
+
+        function checkWin(u) {
+            if(hands[u].length === 0) {
+                alert((u==='player'?"恭喜你赢了！":"AI赢了！") + " 游戏结束。");
+                location.reload();
+                return true;
+            }
+            return false;
+        }
+    </script>
+</body>
+</html>
